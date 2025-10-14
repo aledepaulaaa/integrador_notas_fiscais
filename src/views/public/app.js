@@ -2,6 +2,7 @@
 (function () {
     // Objeto para centralizar as chamadas de API
     const api = {
+        fetchHistory: () => fetch('/api/history').then(handleResponse),
         fetchCnpjs: () => fetch('/api/cnpjs').then(handleResponse),
         addCnpj: (cnpj) => fetch('/api/cnpjs', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cnpj }) }).then(handleResponse),
         deleteCnpjs: (arr) => fetch('/api/cnpjs', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ cnpjs: arr }) }).then(handleResponse),
@@ -194,13 +195,40 @@
         }
     })
 
-        // Função de inicialização
-        (function init() {
-            const today = new Date()
-            const iso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
-            el('startDate').value = iso(new Date(today.getFullYear(), today.getMonth(), 1))
-            el('endDate').value = iso(today)
-            refreshList()
-            pollStatus()
-        })()
+    async function refreshHistory() {
+        try {
+            const data = await api.fetchHistory();
+            const history = data.history?.processings || [];
+            const tbody = el('historyTable');
+            tbody.innerHTML = '';
+
+            history.forEach(entry => {
+                const row = document.createElement('tr');
+                row.innerHTML = `
+                <td>${new Date(entry.date).toLocaleString('pt-BR')}</td>
+                <td>${entry.cnpjsProcessed}</td>
+                <td>${entry.xmlsProcessed}</td>
+                <td class="text-success">${entry.success}</td>
+                <td class="text-danger">${entry.failed}</td>
+                <td class="text-warning">${entry.skipped}</td>
+                <td>${entry.cnpjsWithErrors}</td>
+            `;
+                tbody.appendChild(row);
+            });
+        } catch (e) {
+            console.error('Erro ao carregar histórico:', e);
+        }
+    }
+
+    // Função de inicialização
+    (function init() {
+        const today = new Date()
+        const iso = d => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10)
+        el('startDate').value = iso(new Date(today.getFullYear(), today.getMonth(), 1))
+        el('endDate').value = iso(today)
+        refreshList()
+        pollStatus()
+        refreshHistory() // Adicione esta linha
+        setInterval(refreshHistory, 30000) // E esta linha para atualizar a cada 30 segundos
+    })()
 })()

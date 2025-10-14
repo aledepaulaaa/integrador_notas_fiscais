@@ -27,11 +27,11 @@ function scheduleProcessing() {
     // Agendar a rotina para rodar a cada 4 horas
     scheduledTask = cron.schedule("0 */4 * * *", async () => {
         simpleLog("Iniciando rotina de processamento agendada...")
-        
+
         // Crie o dateRange para a busca. Sugestão: buscar notas dos últimos 30 dias.
         const today = new Date()
         const thirtyDaysAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30)
-        
+
         const dateRange = {
             startDate: thirtyDaysAgo.toISOString().split("T")[0],
             endDate: today.toISOString().split("T")[0]
@@ -158,6 +158,21 @@ async function rotinaCompleta(cnpjsToProcess, dateRange) {
 
     const statusObj = { lastRun: new Date().toISOString(), summary: globalSummary }
     statusModel.saveStatus(statusObj)
+
+    // Adiciona entrada no histórico
+    const historyEntry = {
+        date: new Date().toISOString(),
+        cnpjsProcessed: globalSummary.processedCnpjs,
+        xmlsProcessed: globalSummary.found,
+        success: globalSummary.sent,
+        failed: globalSummary.failed,
+        skipped: globalSummary.skipped,
+        cnpjsWithErrors: cnpjsComFalha,
+        dateRange
+    };
+
+    const historyModel = require('./models/historyModel');
+    historyModel.addProcessingEntry(historyEntry);
 
     simpleLog(`Resumo: ${JSON.stringify(globalSummary)}`)
     simpleLog("================ ROTINA FINALIZADA ================")

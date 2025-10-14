@@ -4,6 +4,7 @@ const router = express.Router();
 const cnpjModel = require('../models/cnpjModel');
 const statusModel = require('../models/statusModel');
 const processedModel = require('../models/processedModel');
+const historyModel = require('../models/historyModel');
 
 const processingState = {
     isProcessing: false,
@@ -11,6 +12,15 @@ const processingState = {
     currentCnpj: '',
     statusMessage: 'Ocioso'
 };
+
+router.get('/history', (req, res) => {
+    try {
+        const history = historyModel.loadHistory();
+        res.json({ ok: true, history });
+    } catch (e) {
+        res.status(500).json({ ok: false, message: 'Erro ao carregar histórico.' });
+    }
+});
 
 router.get('/cnpjs', (req, res) => {
     try {
