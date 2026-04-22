@@ -1,6 +1,7 @@
 // src/index.js
 const express = require("express")
 const path = require("path")
+const fs = require("fs")
 const bodyParser = require("body-parser")
 const config = require("./config")
 const cron = require("node-cron")
@@ -17,7 +18,14 @@ app.get("/", (req, res) => res.sendFile(path.join(__dirname, "views", "index.htm
 
 app.use("/api", apiController.router)
 
-function simpleLog(m) { console.log(`[${new Date().toLocaleString("pt-BR")}] ${m}`) }
+const LOG_FILE = path.join(config.DATA_DIR, 'server.log')
+
+function simpleLog(m) { 
+    const msg = `[${new Date().toLocaleString("pt-BR")}] ${m}`
+    console.log(msg)
+    // Escrever também em arquivo
+    fs.appendFileSync(LOG_FILE, msg + '\n', { flag: 'a' })
+}
 
 // Variável para armazenar a tarefa agendada
 let scheduledTask = null
@@ -28,12 +36,13 @@ function scheduleProcessing() {
     scheduledTask = cron.schedule("0 */4 * * *", async () => {
         simpleLog("Iniciando rotina de processamento agendada...")
 
-        // Crie o dateRange para a busca. Sugestão: buscar notas dos últimos 30 dias.
+        // Crie o dateRange para a busca. Usar range maior para evitar problemas com a API
         const today = new Date()
-        const thirtyDaysAgo = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 30)
+        // Usar desde o início do ano em vez de apenas 30 dias
+        const startOfYear = new Date(today.getFullYear(), 0, 1)
 
         const dateRange = {
-            startDate: thirtyDaysAgo.toISOString().split("T")[0],
+            startDate: startOfYear.toISOString().split("T")[0],
             endDate: today.toISOString().split("T")[0]
         }
 
@@ -57,46 +66,85 @@ function stopProcessing() {
 }
 
 
-async function processCnpjEntry(entry, dateRange) {
-    const { cnpj } = entry
-    simpleLog(`Processando CNPJ ${cnpj}...`)
-    apiController.setState({ currentCnpj: cnpj, statusMessage: `Contando notas para ${cnpj}...`, isProcessing: true })
-
+// Função principal de processamento - baseada no padrão do EXEMPLO-USO.js da SIEG
+async function processarNotasFiscais(cnpj, dataInicio, dataFim) {
+    simpleLog(`Processando notas para CNPJ: ${cnpj}`)
+    simpleLog(`Período: ${dataInicio} a ${dataFim}`)
+    
     try {
-        const startISO = new Date(dateRange.startDate).toISOString()
-        const endISO = new Date(dateRange.endDate + "T23:59:59.999Z").toISOString()
-
-        const totalNotasContadas = await siegService.contarNotas({ cnpj, startISO, endISO })
-
+        // 1. Contar quantas notas existem no período
+        simpleLog('1. Contando notas...')
+        apiController.setState({ statusMessage: `Contando notas para ${cnpj}...` })
+        
+        const totalNotasContadas = await siegService.contarNotas({
+            cnpj: cnpj,
+            startISO: dataInicio,
+            endISO: dataFim
+        })
+        
+        simpleLog(`Encontradas ${totalNotasContadas} notas no período`)
         apiController.setState({ statusMessage: `Total encontrado ${totalNotasContadas} notas para ${cnpj}.` })
-
+        
         if (totalNotasContadas === 0) {
-            simpleLog(`Nenhuma nota nova encontrada para ${cnpj} no período.`)
+            simpleLog(`Nenhuma nota encontrada para ${cnpj}`)
             cnpjModel.updateChecked(cnpj, new Date().toISOString(), { found: 0 })
-            return { total: 0, sent: 0, failed: 0, skipped: 0 }
+            return { found: 0, sent: 0, failed: 0, skipped: 0 }
         }
-
+        
+        // 2. Baixar todas as notas
+        simpleLog('2. Baixando XMLs...')
         apiController.setState({ statusMessage: `Baixando ${totalNotasContadas} notas para ${cnpj}...` })
-
-        const notasBaixadas = await siegService.baixarNotas({ cnpj, startISO, endISO, total: totalNotasContadas })
-
-        cnpjModel.updateChecked(cnpj, new Date().toISOString(), { found: notasBaixadas.length })
-        apiController.setState({ statusMessage: `Baixadas ${notasBaixadas.length} de ${totalNotasContadas} notas para ${cnpj}.` })
-        apiController.setState({ statusMessage: `Enviando ${notasBaixadas.length} notas para NF-Stock...` })
-        const envioResultado = await nfService.uploadAll(notasBaixadas)
-
-        simpleLog(`CNPJ ${cnpj} finalizado. Contadas: ${totalNotasContadas}, Baixadas: ${notasBaixadas.length}, Enviadas: ${envioResultado.sent}, Falhas: ${envioResultado.failed}, Puladas: ${envioResultado.skipped}`)
-        apiController.setState({ statusMessage: `Finalizado envio para ${cnpj}: ${envioResultado.sent} enviados, ${envioResultado.failed} falhas.` })
-
-        return {
-            total: totalNotasContadas,
-            sent: envioResultado.sent,
-            failed: envioResultado.failed,
-            skipped: envioResultado.skipped + (totalNotasContadas - notasBaixadas.length)
+        
+        const xmls = await siegService.baixarNotas({
+            cnpj: cnpj,
+            startISO: dataInicio,
+            endISO: dataFim,
+            total: totalNotasContadas
+        })
+        
+        simpleLog(`Download concluído: ${xmls.length} XMLs baixados`)
+        cnpjModel.updateChecked(cnpj, new Date().toISOString(), { found: xmls.length })
+        
+        // 3. Processar os XMLs baixados
+        const notasProcessadas = xmls.map(xml => ({
+            chave: xml.chave,
+            xml: xml.xml
+        }))
+        
+        // 4. Enviar para NF-Stock (se houver XMLs)
+        if (notasProcessadas.length > 0) {
+            simpleLog(`4. Enviando ${notasProcessadas.length} XMLs para NF-Stock...`)
+            apiController.setState({ statusMessage: `Enviando ${notasProcessadas.length} notas para NF-Stock...` })
+            
+            try {
+                const resultado = await nfService.uploadAll(notasProcessadas)
+                simpleLog(`Upload NF-Stock: ${resultado.sent} enviados, ${resultado.failed} falhas, ${resultado.skipped} pulados`)
+                apiController.setState({ statusMessage: `Finalizado envio para ${cnpj}: ${resultado.sent} enviados.` })
+                
+                return {
+                    found: totalNotasContadas,
+                    sent: resultado.sent,
+                    failed: resultado.failed,
+                    skipped: resultado.skipped
+                }
+                
+            } catch (uploadError) {
+                simpleLog(`Erro no upload para NF-Stock: ${uploadError.message}`)
+                // Não falha o processo inteiro se as notas já foram baixadas
+                return {
+                    found: totalNotasContadas,
+                    sent: 0,
+                    failed: notasProcessadas.length,
+                    skipped: 0,
+                    uploadError: uploadError.message
+                }
+            }
         }
-
+        
+        return { found: totalNotasContadas, sent: 0, failed: 0, skipped: 0 }
+        
     } catch (error) {
-        simpleLog(`Erro crítico ao processar CNPJ ${cnpj}: ${error.message}`)
+        simpleLog(`Erro ao processar CNPJ ${cnpj}: ${error.message}`)
         cnpjModel.updateError(cnpj, error.message)
         cnpjModel.incrementProcessCount(cnpj)
         apiController.setState({ statusMessage: `Erro ao processar ${cnpj}: ${error.message}` })
@@ -106,6 +154,8 @@ async function processCnpjEntry(entry, dateRange) {
 
 // O resto do arquivo (rotinaCompleta, app.listen, etc.) permanece exatamente o mesmo.
 async function rotinaCompleta(cnpjsToProcess, dateRange) {
+    simpleLog("================ INICIANDO ROTINA DE INTEGRAÇÃO ================")
+    
     const state = apiController.getState()
     if (state.isProcessing) {
         simpleLog("Rotina já em andamento. Nova execução ignorada.")
@@ -118,7 +168,6 @@ async function rotinaCompleta(cnpjsToProcess, dateRange) {
     }
 
     apiController.setState({ isProcessing: true, statusMessage: "Iniciando rotina de integração...", progress: 0 })
-    simpleLog("================ INICIANDO ROTINA DE INTEGRAÇÃO ================")
 
     const cnpjs = cnpjModel.loadAll().filter(c => cnpjsToProcess.includes(c.cnpj))
     if (cnpjs.length === 0) {
@@ -132,24 +181,32 @@ async function rotinaCompleta(cnpjsToProcess, dateRange) {
 
     for (let i = 0; i < cnpjs.length; i++) {
         const entry = cnpjs[i]
-        apiController.setState({ currentCnpj: entry.cnpj, statusMessage: `Processando ${entry.cnpj} (${i + 1}/${cnpjs.length})` })
+        const { cnpj } = entry
+        const startISO = new Date(dateRange.startDate).toISOString()
+        const endISO = new Date(dateRange.endDate + "T23:59:59.000Z").toISOString()
+        
+        apiController.setState({ 
+            currentCnpj: cnpj, 
+            statusMessage: `Processando ${cnpj} (${i + 1}/${cnpjs.length})`,
+            progress: Math.round(((i) / cnpjs.length) * 100)
+        })
 
         if ((entry.processCount || 0) >= 3) {
-            simpleLog(`CNPJ ${entry.cnpj} pulado devido a falhas repetidas.`)
+            simpleLog(`CNPJ ${cnpj} pulado devido a falhas repetidas.`)
             globalSummary.skipped += (entry.lastResult?.found || 0)
             cnpjsComFalha++
             continue
         }
 
         try {
-            const r = await processCnpjEntry(entry, dateRange)
-            globalSummary.found += r.total || 0
-            globalSummary.sent += r.sent || 0
-            globalSummary.failed += r.failed || 0
-            globalSummary.skipped += r.skipped || 0
+            const resultado = await processarNotasFiscais(cnpj, startISO, endISO)
+            globalSummary.found += resultado.found || 0
+            globalSummary.sent += resultado.sent || 0
+            globalSummary.failed += resultado.failed || 0
+            globalSummary.skipped += resultado.skipped || 0
         } catch (e) {
             cnpjsComFalha++
-            simpleLog(`Erro no processamento do CNPJ ${entry.cnpj}: ${e.message}`)
+            simpleLog(`Erro no processamento do CNPJ ${cnpj}: ${e.message}`)
         }
 
         globalSummary.processedCnpjs++
@@ -169,10 +226,10 @@ async function rotinaCompleta(cnpjsToProcess, dateRange) {
         skipped: globalSummary.skipped,
         cnpjsWithErrors: cnpjsComFalha,
         dateRange
-    };
+    }
 
-    const historyModel = require('./models/historyModel');
-    historyModel.addProcessingEntry(historyEntry);
+    const historyModel = require('./models/historyModel')
+    historyModel.addProcessingEntry(historyEntry)
 
     simpleLog(`Resumo: ${JSON.stringify(globalSummary)}`)
     simpleLog("================ ROTINA FINALIZADA ================")

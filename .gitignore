@@ -6,3 +6,26 @@ node_modules
 
 # ARQUIVOS JSON
 data
+
+# INSTRUÇÕES E DOCUMENTAÇÕES
+implementation_plan.md
+protocolo.txt
+RELATORIO_IP_SIEGE.md
+RELATORIO_IP_SIEGE.txt
+GUIA_POSTMAN.md
+GUIA-RAPIDO.md
+IMPLEMENTACAO-CONCLUIDA.md
+IMPLEMENTACAO-SIMPLIFICADA.md
+INDICE-DOCUMENTACAO.md
+
+
+# TESTES
+scripts
+tests
+EXEMPLO-USO-PROCESSARNOTAS.js
+get-public-ip.js
+*.spec.js
+*.test.js
+test-api.js
+test-api-wait.js
+test-sieg-debug.js

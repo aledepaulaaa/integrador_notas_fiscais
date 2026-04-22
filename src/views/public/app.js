@@ -20,7 +20,9 @@
             }).then(handleResponse),
         status: () => fetch('/api/status').then(handleResponse),
         reset: () => fetch('/api/reset', { method: 'POST' }).then(handleResponse),
-        stopSchedule: () => fetch('/api/stop-schedule', { method: 'POST' }).then(handleResponse)
+        stopSchedule: () => fetch('/api/stop-schedule', { method: 'POST' }).then(handleResponse),
+        fetchLogs: () => fetch('/api/logs').then(handleResponse),
+        clearLogs: () => fetch('/api/logs/clear', { method: 'POST' }).then(handleResponse)
     }
 
     // Função central para tratar respostas da API
@@ -109,6 +111,20 @@
         }
     }
 
+    async function refreshLogs() {
+        try {
+            const data = await api.fetchLogs()
+            const logs = data.logs || []
+            const logBox = el('logBox')
+            // Mostrar últimos 30 logs
+            logBox.innerText = logs.slice(-30).reverse().join('\n')
+        } catch (e) {
+            console.error('Erro ao carregar logs:', e)
+        } finally {
+            setTimeout(refreshLogs, 2000)
+        }
+    }
+
     // Event Listeners
     el('addCnpjBtn').addEventListener('click', async () => {
         const input = el('cnpjInput')
@@ -134,6 +150,8 @@
         try {
             const res = await api.startProcess(checked, startDate, endDate)
             appendLog('Processamento disparado: ' + res.message)
+            // Força refresh dos logs imediatamente
+            setTimeout(() => refreshLogs(), 500)
         } catch (e) {
             showAlert(e.message, 'danger')
         }
@@ -180,7 +198,15 @@
         }
     })
 
-    el('clearLog').addEventListener('click', () => { el('logBox').innerText = '' })
+    el('clearLog').addEventListener('click', async () => {
+        try {
+            await api.clearLogs()
+            el('logBox').innerText = ''
+            showAlert('Logs limpos com sucesso!', 'success')
+        } catch (e) {
+            showAlert(e.message, 'danger')
+        }
+    })
 
     // Event Listener para o novo botão
     el('stopAutoBtn').addEventListener('click', async () => {
@@ -228,6 +254,7 @@
         el('endDate').value = iso(today)
         refreshList()
         pollStatus()
+        refreshLogs()
         refreshHistory() // Adicione esta linha
         setInterval(refreshHistory, 30000) // E esta linha para atualizar a cada 30 segundos
     })()

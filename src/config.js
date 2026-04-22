@@ -11,10 +11,12 @@ module.exports = {
     // Padrão: a cada 5 minutos.
     CRON_SCHEDULE: process.env.CRON_SCHEDULE || '*/5 * * * *',
 
-    // --- API da SIEGE ---
+    // --- API da SIEG ---
     SIEG_API_BASE: process.env.SIEG_API_BASE || 'https://api.sieg.com',
     // A chave da API deve ser passada diretamente do .env
-    SIEG_API_KEY: process.env.SIEGE_API_KEY || '',
+    SIEG_API_KEY: process.env.SIEG_API_KEY || '',
+    SIEG_CLIENT_ID: process.env.SIEG_CLIENT_ID || '',
+    SIEG_SECRET_KEY: process.env.SIEG_SECRET_KEY || '',
     // Quantidade de notas a buscar por página na SIEGE (máximo 50)
     SIEG_PAGE_SIZE: Math.min(50, Number(process.env.SIEG_PAGE_SIZE || 50)),
 
